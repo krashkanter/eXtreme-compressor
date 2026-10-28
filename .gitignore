@@ -1,2 +1,16 @@
 .vscode/
 build/
+.gradle/
+.cxx/
+local.properties
+*.iml
+.idea/
+
+android/*-verification.log
+
+*.p12
+*.jks
+*.keystore
+
+.kotlin/
+.cxx-before-rename/

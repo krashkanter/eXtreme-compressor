@@ -5,6 +5,65 @@
 #include "file-handler.h"
 #include "quadtree.h"
 
+#define EXTC_FORMAT_VERSION 2
+#define EXTC_MEDIA_IMAGE 1
+#define EXTC_HEADER_SIZE 24
+
+typedef struct {
+    int version;
+    int media_type;
+    int width;
+    int height;
+    int channels;
+    int block_width;
+    int block_height;
+    uint32_t crc;
+} ExtcHeader;
+
+static int read_extc_header(FILE *file, ExtcHeader *header) {
+    unsigned char bytes[8];
+    uint32_t width, height;
+    memset(header, 0, sizeof(*header));
+    if(fread(bytes, 1, 8, file) != 8 || memcmp(bytes, "EXTC", 4)) {
+        return 0;
+    }
+    header->version = bytes[4];
+    if(header->version != 1 && header->version != EXTC_FORMAT_VERSION) {
+        fprintf(stderr, "Unsupported EXTC version: %d.\n", header->version);
+        return 0;
+    }
+    if(header->version == 2 && (bytes[5] != EXTC_MEDIA_IMAGE || bytes[6] != 0 ||
+       bytes[7] != EXTC_HEADER_SIZE)) {
+        fprintf(stderr, "Unsupported EXTC media type, flags, or header size.\n");
+        return 0;
+    }
+    if(!read_u32(file, &width) || !read_u32(file, &height) || !read_u32(file, &header->crc) ||
+       width > 32768 || height > 32768 || !valid_shape((int)width, (int)height)) {
+        return 0;
+    }
+    if(header->version == 1) {
+        header->block_height = bytes[5];
+        header->block_width = bytes[6];
+        header->channels = bytes[7] == 0 ? 1 : bytes[7];
+    } else {
+        if(fread(bytes, 1, 4, file) != 4 || bytes[3] != 0) {
+            return 0;
+        }
+        header->block_height = bytes[0];
+        header->block_width = bytes[1];
+        header->channels = bytes[2];
+    }
+    if(!header->block_height || !header->block_width ||
+       header->block_height * header->block_width != 32 ||
+       (header->channels != 1 && header->channels != 3)) {
+        return 0;
+    }
+    header->media_type = EXTC_MEDIA_IMAGE;
+    header->width = (int)width;
+    header->height = (int)height;
+    return 1;
+}
+
 typedef struct {
     FILE *file;
     unsigned int byte;
@@ -98,7 +157,8 @@ static void encode_block(BitStream *stream, const unsigned char block[32],
         return;
     }
     Cover cover = minimize_block(block, width);
-    if(cover.count < 1 || cover.count >= 5) {
+    int encoded_cost = 2 + 1 + (cover.symbol == 0 ? 1 : 2) + 3 + cover.cost;
+    if(cover.count < 1 || cover.count >= 5 || encoded_cost >= 34) {
         write_bits(stream, 3, 2);
         for(int i = 0; i < 32; i++) {
             write_bits(stream, block[i], 1);
@@ -185,17 +245,24 @@ static int decode_block(BitStream *stream, unsigned char block[32], int width) {
     return !stream->error;
 }
 
-static int compress_image(FILE *file, const Image *image, int block_width,
-                           int block_height, CompressionStats *stats) {
+static int compress_image_controlled(FILE *file, const Image *image, int block_width,
+                                     int block_height, CompressionStats *stats,
+                                     int (*cancelled)(void *), void *context) {
     int channels = image->channels ? image->channels : 1;
-    unsigned char header[8] = {'E', 'X', 'T', 'C', 1,
-                             (unsigned char)block_height, (unsigned char)block_width,
-                             (unsigned char)(channels == 3 ? 3 : 0)};
+    unsigned char header[8] = {'E', 'X', 'T', 'C', EXTC_FORMAT_VERSION,
+                              EXTC_MEDIA_IMAGE, 0, EXTC_HEADER_SIZE};
+    if(!valid_shape(image->width, image->height) || (channels != 1 && channels != 3) ||
+       block_width < 1 || block_height < 1 || block_width > 32 || block_height > 32 ||
+       block_width * block_height != 32) {
+        return 0;
+    }
     memset(stats, 0, sizeof(*stats));
     stats->plane_count = channels * 8;
     if(fwrite(header, 1, 8, file) != 8 ||
        !write_u32(file, (uint32_t)image->width) ||
-       !write_u32(file, (uint32_t)image->height) || !write_u32(file, image_crc(image))) {
+       !write_u32(file, (uint32_t)image->height) || !write_u32(file, image_crc(image)) ||
+       fputc(block_height, file) == EOF || fputc(block_width, file) == EOF ||
+       fputc(channels, file) == EOF || fputc(0, file) == EOF) {
         return 0;
     }
     BitStream stream = {0};
@@ -205,6 +272,9 @@ static int compress_image(FILE *file, const Image *image, int block_width,
             int idx = channel * 8 + plane;
             size_t start = stream.bits;
             for(int y = 0; y < image->height; y += block_height) {
+                if(cancelled && cancelled(context)) {
+                    return 0;
+                }
                 for(int x = 0; x < image->width; x += block_width) {
                     unsigned char block[32];
                     read_block(image->pixels, image->width, image->height, channels,
@@ -216,26 +286,27 @@ static int compress_image(FILE *file, const Image *image, int block_width,
         }
     }
     flush_bits(&stream);
-    stats->bytes = 20 + (stream.bits + 7) / 8;
+    stats->bytes = EXTC_HEADER_SIZE + (stream.bits + 7) / 8;
     return !stream.error && fflush(file) == 0;
 }
 
-static int decompress_image(FILE *file, Image *image) {
-    unsigned char header[8];
-    uint32_t width, height, crc;
-    if(fread(header, 1, 8, file) != 8 || memcmp(header, "EXTC", 4) ||
-       header[4] != 1 || (header[7] != 0 && header[7] != 1 && header[7] != 3) ||
-       !header[5] || !header[6] || header[5] * header[6] != 32 ||
-       !read_u32(file, &width) || !read_u32(file, &height) || !read_u32(file, &crc) ||
-       width > 32768 || height > 32768 || !valid_shape((int)width, (int)height)) {
-        fprintf(stderr, "Invalid compressed file header.\n");
+static int compress_image(FILE *file, const Image *image, int block_width,
+                           int block_height, CompressionStats *stats) {
+    return compress_image_controlled(file, image, block_width, block_height, stats, NULL, NULL);
+}
+
+static int decompress_image_controlled(FILE *file, Image *image,
+                                       int (*cancelled)(void *), void *context) {
+    ExtcHeader header;
+    if(!read_extc_header(file, &header)) {
+        fprintf(stderr, "Invalid or unsupported EXTC image header.\n");
         return 0;
     }
-    int channels = header[7] == 3 ? 3 : 1;
-    image->width = (int)width;
-    image->height = (int)height;
+    int channels = header.channels;
+    image->width = header.width;
+    image->height = header.height;
     image->channels = channels;
-    image->pixels = calloc((size_t)width * (size_t)height * (size_t)channels, 1);
+    image->pixels = calloc((size_t)image->width * (size_t)image->height * (size_t)channels, 1);
     if(!image->pixels) {
         return 0;
     }
@@ -243,30 +314,39 @@ static int decompress_image(FILE *file, Image *image) {
     stream.file = file;
     for(int channel = 0; channel < channels; channel++) {
         for(int plane = 0; plane < 8; plane++) {
-            for(int y = 0; y < image->height; y += header[5]) {
-                for(int x = 0; x < image->width; x += header[6]) {
+            for(int y = 0; y < image->height; y += header.block_height) {
+                if(cancelled && cancelled(context)) {
+                    free(image->pixels);
+                    image->pixels = NULL;
+                    return 0;
+                }
+                for(int x = 0; x < image->width; x += header.block_width) {
                     unsigned char block[32];
-                    if(!decode_block(&stream, block, header[6])) {
+                    if(!decode_block(&stream, block, header.block_width)) {
                         fprintf(stderr, "Truncated or invalid compressed blocks.\n");
                         free(image->pixels);
                         image->pixels = NULL;
                         return 0;
                     }
                     write_block(image->pixels, image->width, image->height, channels,
-                                x, y, header[6], header[5], channel, plane, block);
+                                x, y, header.block_width, header.block_height, channel, plane, block);
                 }
             }
         }
     }
     unsigned int padding_mask = (1U << stream.used) - 1;
     if((stream.byte & padding_mask) || fgetc(file) != EOF || ferror(file) ||
-       image_crc(image) != crc) {
+       image_crc(image) != header.crc) {
         fprintf(stderr, "Compressed file failed integrity verification.\n");
         free(image->pixels);
         image->pixels = NULL;
         return 0;
     }
     return 1;
+}
+
+static int decompress_image(FILE *file, Image *image) {
+    return decompress_image_controlled(file, image, NULL, NULL);
 }
 
 static int print_stats(FILE *file, const Image *image, const CompressionStats *stats) {
@@ -294,7 +374,7 @@ static int print_stats(FILE *file, const Image *image, const CompressionStats *s
         fprintf(file, "Compressed bits: %zu\n\n", plane->bits);
     }
     fprintf(file, "Original %s size: %zu bytes\n", channels == 3 ? "color" : "grayscale", original);
-    fprintf(file, "Compressed file size: %zu bytes (20-byte header included)\n", stats->bytes);
+    fprintf(file, "Compressed file size: %zu bytes (24-byte versioned header included)\n", stats->bytes);
     fprintf(file, "Compression ratio: %.4f\n", (double)original / (double)stats->bytes);
     fprintf(file, "Space savings: %.2f%%\n", (1 - (double)stats->bytes / (double)original) * 100);
     return !ferror(file);

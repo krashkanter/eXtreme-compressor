@@ -1,6 +1,8 @@
-# eXtreme-compressor
+# Experimental Compressor
 
 Pure C implementation of research version image-compression
+
+Repository: https://github.com/krashkanter/experimental-compressor
 
 Standalone C11 port of `image-compression`'s newest branch by commit date,
 `fixed-8x4`, at `85cfc646fc47e18bd68f59013df4da7d582398e9`.
@@ -85,12 +87,46 @@ ON and OFF sets are tried. This preserves the Boolean function but is not the
 full Espresso heuristic; cube choices, compressed sizes, and statistics can
 differ. The block payload can be decoded by the reference Python decoder.
 
-An `.extc` file adds a 20-byte header before that payload: `EXTC`, version byte
-`1`, block height and width bytes, channel count byte (`0` or `1` for grayscale, `3`
-for RGB color), then little-endian 32-bit image width, image height, and CRC-32 of
-the pixels. Payload bits are most significant first, with zero padding in the final
-byte. The decoder rejects invalid headers, truncated blocks, invalid cube counts,
-nonzero end padding, trailing data, and checksum failures.
+New `.extc` files use version 2, with an explicit media type and header size.
+The decoder also accepts existing version 1 grayscale and RGB images. Unknown
+versions, media types, flags, and header sizes are rejected before pixel allocation.
+The image payload remains the same bitplane/block encoding.
+
+| Offset | Size | EXTC v2 field |
+| --- | --- | --- |
+| 0 | 4 | ASCII `EXTC` magic |
+| 4 | 1 | Container version: `2` |
+| 5 | 1 | Media type: `1` for an image |
+| 6 | 1 | Flags: `0` |
+| 7 | 1 | Header size: `24` bytes |
+| 8 | 4 | Image width, little-endian |
+| 12 | 4 | Image height, little-endian |
+| 16 | 4 | CRC-32 of decoded pixel bytes, little-endian |
+| 20 | 1 | Block height |
+| 21 | 1 | Block width |
+| 22 | 1 | Channels: `1` grayscale or `3` RGB |
+| 23 | 1 | Reserved: `0` |
+| 24 | variable | Image block payload |
+
+Version 1 has a 20-byte header: byte 5 is block height, byte 6 is block width,
+and byte 7 is `0`/`1` for grayscale or `3` for RGB. Its dimensions and CRC occupy
+the same offsets as v2. No other media types are currently implemented. New
+media codecs must define a media identifier and a supported version parser;
+readers must never guess an unknown format from its payload.
+
+Payload bits are most significant first, with zero padding in the final byte.
+The decoder rejects truncated blocks, invalid cube counts, nonzero end padding,
+trailing data, and checksum failures. Python bit arrays require the container
+header and bit packing before use with this file decoder.
+
+## Mobile apps
+
+`android/` contains a native Kotlin/Compose Android app with a JNI wrapper around
+this same C codec. It supports Android 6.0 (API 23) and newer, with ARMv7, ARM64,
+and x86-64 builds. See [Android instructions](android/README.md).
+
+`ios/` is initialized with design and integration notes only. No iOS app or
+wrapper implementation has been written or built.
 
 ## Source layout
 
@@ -107,3 +143,5 @@ of that header's size. Its comments were removed to match the requested code
 style; its public-domain dedication is preserved in `LICENSE`. Only PNG, JPEG,
 BMP, and PNM decoding are enabled; SIMD and floating-point image modes are
 disabled.
+
+The product is named Experimental Compressor. EXTC remains the file format and CLI name. Android application ID `com.krashkanter.extc`, MIME identifiers, and the existing signing key are retained so installed apps and saved files remain compatible.

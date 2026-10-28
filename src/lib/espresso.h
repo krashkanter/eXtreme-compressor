@@ -164,7 +164,8 @@ static Cover minimize_block(const unsigned char block[32], int width) {
     Cover offset = minimize_set(~points);
     onset.onset = 1;
     offset.onset = 0;
-    return onset.cost <= offset.cost ? onset : offset;
+    return onset.cost + (onset.symbol == 0 ? 1 : 2) <=
+           offset.cost + (offset.symbol == 0 ? 1 : 2) ? onset : offset;
 }
 
 #endif

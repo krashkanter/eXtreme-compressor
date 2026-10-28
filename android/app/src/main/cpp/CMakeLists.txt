@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.22)
+project(experimental_compressor_android LANGUAGES C)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+add_library(extc SHARED extc_jni.c)
+target_include_directories(extc PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../src/lib")
+target_compile_options(extc PRIVATE -O2 -Wall -Wextra -Wno-unused-function)
+target_link_libraries(extc android jnigraphics log)
