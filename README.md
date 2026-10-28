@@ -87,18 +87,18 @@ ON and OFF sets are tried. This preserves the Boolean function but is not the
 full Espresso heuristic; cube choices, compressed sizes, and statistics can
 differ. The block payload can be decoded by the reference Python decoder.
 
-New `.extc` files use version 2, with an explicit media type and header size.
-The decoder also accepts existing version 1 grayscale and RGB images. Unknown
+New `.extc` files use version 3, with an explicit media type and header size.
+The decoder also accepts existing version 1 and 2 grayscale and RGB images. Unknown
 versions, media types, flags, and header sizes are rejected before pixel allocation.
 The image payload remains the same bitplane/block encoding.
 
-| Offset | Size | EXTC v2 field |
+| Offset | Size | EXTC v3 field |
 | --- | --- | --- |
 | 0 | 4 | ASCII `EXTC` magic |
-| 4 | 1 | Container version: `2` |
+| 4 | 1 | Container version: `3` |
 | 5 | 1 | Media type: `1` for an image |
 | 6 | 1 | Flags: `0` |
-| 7 | 1 | Header size: `24` bytes |
+| 7 | 1 | Header size: `32` bytes |
 | 8 | 4 | Image width, little-endian |
 | 12 | 4 | Image height, little-endian |
 | 16 | 4 | CRC-32 of decoded pixel bytes, little-endian |
@@ -106,9 +106,10 @@ The image payload remains the same bitplane/block encoding.
 | 21 | 1 | Block width |
 | 22 | 1 | Channels: `1` grayscale or `3` RGB |
 | 23 | 1 | Reserved: `0` |
-| 24 | variable | Image block payload |
+| 24 | 8 | Original encoded input file size, little-endian; `0` if unavailable |
+| 32 | variable | Image block payload |
 
-Version 1 has a 20-byte header: byte 5 is block height, byte 6 is block width,
+Version 2 uses the first 24 bytes above with version `2` and header size `24`; it has no original-file size. Version 1 has a 20-byte header: byte 5 is block height, byte 6 is block width,
 and byte 7 is `0`/`1` for grayscale or `3` for RGB. Its dimensions and CRC occupy
 the same offsets as v2. No other media types are currently implemented. New
 media codecs must define a media identifier and a supported version parser;
@@ -145,3 +146,5 @@ BMP, and PNM decoding are enabled; SIMD and floating-point image modes are
 disabled.
 
 The product is named Experimental Compressor. EXTC remains the file format and CLI name. Android application ID `com.krashkanter.extc`, MIME identifiers, and the existing signing key are retained so installed apps and saved files remain compatible.
+
+Stats distinguish the original encoded JPG/PNG/etc. file size, decoded grayscale/RGB pixel bytes, and the EXTC container size. The original-file size is preserved in v3 and reported as unavailable for v1/v2 or raw-buffer callers that do not provide it. It is never inferred from decoded pixels.

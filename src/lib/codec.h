@@ -5,9 +5,9 @@
 #include "file-handler.h"
 #include "quadtree.h"
 
-#define EXTC_FORMAT_VERSION 2
+#define EXTC_FORMAT_VERSION 3
 #define EXTC_MEDIA_IMAGE 1
-#define EXTC_HEADER_SIZE 24
+#define EXTC_HEADER_SIZE 32
 
 typedef struct {
     int version;
@@ -18,6 +18,7 @@ typedef struct {
     int block_width;
     int block_height;
     uint32_t crc;
+    uint64_t source_bytes;
 } ExtcHeader;
 
 static int read_extc_header(FILE *file, ExtcHeader *header) {
@@ -28,12 +29,12 @@ static int read_extc_header(FILE *file, ExtcHeader *header) {
         return 0;
     }
     header->version = bytes[4];
-    if(header->version != 1 && header->version != EXTC_FORMAT_VERSION) {
+    if(header->version < 1 || header->version > EXTC_FORMAT_VERSION) {
         fprintf(stderr, "Unsupported EXTC version: %d.\n", header->version);
         return 0;
     }
-    if(header->version == 2 && (bytes[5] != EXTC_MEDIA_IMAGE || bytes[6] != 0 ||
-       bytes[7] != EXTC_HEADER_SIZE)) {
+    if(header->version >= 2 && (bytes[5] != EXTC_MEDIA_IMAGE || bytes[6] != 0 ||
+       bytes[7] != (header->version == 2 ? 24 : EXTC_HEADER_SIZE))) {
         fprintf(stderr, "Unsupported EXTC media type, flags, or header size.\n");
         return 0;
     }
@@ -57,6 +58,13 @@ static int read_extc_header(FILE *file, ExtcHeader *header) {
        header->block_height * header->block_width != 32 ||
        (header->channels != 1 && header->channels != 3)) {
         return 0;
+    }
+    if(header->version >= 3) {
+        uint32_t low, high;
+        if(!read_u32(file, &low) || !read_u32(file, &high) || (high & UINT32_C(0x80000000))) {
+            return 0;
+        }
+        header->source_bytes = ((uint64_t)high << 32) | low;
     }
     header->media_type = EXTC_MEDIA_IMAGE;
     header->width = (int)width;
@@ -262,7 +270,9 @@ static int compress_image_controlled(FILE *file, const Image *image, int block_w
        !write_u32(file, (uint32_t)image->width) ||
        !write_u32(file, (uint32_t)image->height) || !write_u32(file, image_crc(image)) ||
        fputc(block_height, file) == EOF || fputc(block_width, file) == EOF ||
-       fputc(channels, file) == EOF || fputc(0, file) == EOF) {
+       fputc(channels, file) == EOF || fputc(0, file) == EOF ||
+       !write_u32(file, (uint32_t)image->source_bytes) ||
+       !write_u32(file, (uint32_t)(image->source_bytes >> 32))) {
         return 0;
     }
     BitStream stream = {0};
@@ -306,6 +316,7 @@ static int decompress_image_controlled(FILE *file, Image *image,
     image->width = header.width;
     image->height = header.height;
     image->channels = channels;
+    image->source_bytes = header.source_bytes;
     image->pixels = calloc((size_t)image->width * (size_t)image->height * (size_t)channels, 1);
     if(!image->pixels) {
         return 0;
@@ -373,10 +384,15 @@ static int print_stats(FILE *file, const Image *image, const CompressionStats *s
         }
         fprintf(file, "Compressed bits: %zu\n\n", plane->bits);
     }
-    fprintf(file, "Original %s size: %zu bytes\n", channels == 3 ? "color" : "grayscale", original);
-    fprintf(file, "Compressed file size: %zu bytes (24-byte versioned header included)\n", stats->bytes);
-    fprintf(file, "Compression ratio: %.4f\n", (double)original / (double)stats->bytes);
-    fprintf(file, "Space savings: %.2f%%\n", (1 - (double)stats->bytes / (double)original) * 100);
+    if(image->source_bytes) {
+        fprintf(file, "Original file size: %llu bytes\n", (unsigned long long)image->source_bytes);
+    } else {
+        fprintf(file, "Original file size: unavailable\n");
+    }
+    fprintf(file, "Decoded pixel size: %zu bytes\n", original);
+    fprintf(file, "Compressed file size: %zu bytes (32-byte versioned header included)\n", stats->bytes);
+    fprintf(file, "Compression ratio (decoded/EXTC): %.4f\n", (double)original / (double)stats->bytes);
+    fprintf(file, "Space savings (vs decoded): %.2f%%\n", (1 - (double)stats->bytes / (double)original) * 100);
     return !ferror(file);
 }
 

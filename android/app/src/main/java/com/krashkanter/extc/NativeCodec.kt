@@ -6,6 +6,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 object NativeCodec {
     init { System.loadLibrary("extc") }
 
-    external fun compress(bitmap: Bitmap, output: String, cancelled: AtomicBoolean)
+    external fun compress(bitmap: Bitmap, output: String, cancelled: AtomicBoolean, sourceBytes: Long = 0)
     external fun decompress(input: String, cancelled: AtomicBoolean, maxPixels: Long): Bitmap
 }

@@ -45,16 +45,21 @@ class CodecInstrumentedTest {
     @Test fun nativeRoundTripVersionsAndCorruption() {
         val original = image()
         val file = File(app.cacheDir, "native-test.extc")
-        NativeCodec.compress(original, file.path, AtomicBoolean(false))
+        NativeCodec.compress(original, file.path, AtomicBoolean(false), 12345)
         val bytes = file.readBytes()
-        Assert.assertEquals(2, bytes[4].toInt())
+        Assert.assertEquals(3, bytes[4].toInt())
         Assert.assertEquals(1, bytes[5].toInt())
-        Assert.assertEquals(24, bytes[7].toInt())
+        Assert.assertEquals(32, bytes[7].toInt())
+        Assert.assertEquals(12345L,java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong(24))
         matches(original, NativeCodec.decompress(file.path, AtomicBoolean(false), 16_000_000))
-        val legacy = bytes.copyOfRange(0,20) + bytes.copyOfRange(24, bytes.size)
+        val legacy = bytes.copyOfRange(0,20) + bytes.copyOfRange(32, bytes.size)
         legacy[4] = 1; legacy[5] = 4; legacy[6] = 8; legacy[7] = 3
         file.writeBytes(legacy)
         matches(original, NativeCodec.decompress(file.path, AtomicBoolean(false), 16_000_000))
+        val versionTwo = bytes.copyOfRange(0,24) + bytes.copyOfRange(32,bytes.size)
+        versionTwo[4] = 2; versionTwo[7] = 24
+        file.writeBytes(versionTwo)
+        matches(original, NativeCodec.decompress(file.path, AtomicBoolean(false),16_000_000))
         for(mutated in listOf(bytes.copyOf().apply { this[4] = 99 }, bytes.copyOf().apply { this[5] = 2 },
             bytes.copyOf().apply { this[16] = (this[16].toInt() xor 1).toByte() }, bytes.copyOf(21))) {
             file.writeBytes(mutated)
@@ -86,7 +91,7 @@ class CodecInstrumentedTest {
             val header = ByteArray(5)
             Assert.assertEquals(5,input.read(header))
             Assert.assertEquals("EXTC",String(header,0,4,Charsets.US_ASCII))
-            Assert.assertEquals(2,header[4].toInt())
+            Assert.assertEquals(3,header[4].toInt())
         }
         app.startActivity(Intent(app,MainActivity::class.java).setAction(Intent.ACTION_SEND).setType("image/png")
             .putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION))
@@ -134,7 +139,9 @@ class CodecInstrumentedTest {
             compose.runOnUiThread { model.openImage(saveUri) }
             waitModel(model)
             Assert.assertNull(model.state.value.error, model.state.value.error)
-            Assert.assertEquals(2,model.state.value.viewer?.version)
+            Assert.assertEquals(3,model.state.value.viewer?.version)
+            Assert.assertEquals(File(source,"first.png").length(), model.state.value.viewer?.sourceBytes)
+            Assert.assertEquals(40L*28*3, model.state.value.viewer?.decodedBytes)
             matches(bitmap,model.state.value.viewer!!.bitmap)
             compose.runOnUiThread { model.selectBatch(inputTree) }
             waitModel(model)

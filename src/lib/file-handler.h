@@ -11,6 +11,7 @@ typedef struct {
     int width;
     int height;
     int channels;
+    uint64_t source_bytes;
 } Image;
 
 static int valid_shape(int width, int height) {
@@ -6336,6 +6337,15 @@ static int load_image(const char *path, Image *image) {
        !valid_shape(image->width, image->height)) {
         fprintf(stderr, "Invalid image or unsupported dimensions.\n");
         return 0;
+    }
+    image->source_bytes = 0;
+    FILE *source = fopen(path, "rb");
+    if(source) {
+        if(fseek(source, 0, SEEK_END) == 0) {
+            long size = ftell(source);
+            if(size > 0) image->source_bytes = (uint64_t)size;
+        }
+        fclose(source);
     }
     image->channels = channels >= 3 ? 3 : 1;
     image->pixels = stbi_load(path, &image->width, &image->height, &channels, image->channels);

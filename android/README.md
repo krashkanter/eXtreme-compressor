@@ -15,7 +15,7 @@ The APK is `app/build/outputs/apk/debug/app-debug.apk`. Minimum Android version 
 
 ## Flows
 
-- Share one image to Experimental Compressor using Android's image share intent, or choose **Pick image**. A result dialog reports the original file size, EXTC file size, conversion duration including import/decode, and dimensions. Choose **Save**, **Copy**, or **Discard**. File size increases are reported honestly.
+- Share one image to Experimental Compressor using Android's image share intent, or choose **Pick image**. A result dialog reports the original file size, decoded pixel size, EXTC file size, conversion duration including import/decode, and dimensions. Choose **Save**, **Copy**, or **Discard**. File size increases are reported honestly.
 - **Copy** puts a granted content URI on Android's clipboard, not a text path or Base64 data. The receiving app must support pasting files. Copied files remain in a private sharing cache for up to seven days and are removed on a later launch after expiry. Discarded files are deleted immediately.
 - **Convert folder** scans images recursively, then offers only **Cancel** or **Select folder** for the output. Folder structure is preserved, output collisions receive numeric suffixes, and each file is converted sequentially. Failed images are counted and skipped. Cancellation interrupts the current native conversion, removes its incomplete output, and preserves completed files. Keep the app open while a batch runs; it is not a scheduled background job. Rotation retains the active task.
 - **Open EXTC** or an external `ACTION_VIEW` opens a simple viewer with pinch zoom, double-tap zoom, and Fit. The manifest registers EXTC MIME types, generic binary files, and EXTC filename patterns. The actual header is always checked; Android file managers still control which handlers they offer for their content URIs.
@@ -26,9 +26,9 @@ The image import uses Android's available bitmap decoders, applies EXIF orientat
 
 ## Format and integration
 
-The JNI library includes `src/lib/codec.h` from the repository root. It writes EXTC v2 image containers and reads v1 and v2. Unknown container versions and non-image media types fail before image allocation. CRC validation detects damaged/truncated pixel payloads. A mutex serializes the C minimizer across native calls; a cancellation callback observes an `AtomicBoolean` between block rows.
+The JNI library includes `src/lib/codec.h` from the repository root. It writes EXTC v3 image containers and reads v1, v2, and v3. Unknown container versions and non-image media types fail before image allocation. CRC validation detects damaged/truncated pixel payloads. A mutex serializes the C minimizer across native calls; a cancellation callback observes an `AtomicBoolean` between block rows.
 
-`NativeCodec.compress(Bitmap, outputPath, cancellation)` writes an EXTC file. `NativeCodec.decompress(inputPath, cancellation, maxPixels)` returns an ARGB bitmap. No copy of the compression algorithm is maintained in Kotlin.
+`NativeCodec.compress(Bitmap, outputPath, cancellation, sourceBytes)` writes an EXTC file. `NativeCodec.decompress(inputPath, cancellation, maxPixels)` returns an ARGB bitmap. No copy of the compression algorithm is maintained in Kotlin.
 
 Instrumentation tests exercise real JNI round trips, v1 compatibility, unsupported headers, checksums, memory limits, cancellation, share/view intents, result actions, folder conversion, and Storage Access Framework saving. A debug-only document provider supplies deterministic test folders; it is disabled by default and never included in release builds.
 
@@ -38,7 +38,7 @@ Built the debug APK for ARM64, ARMv7, and x86-64. All five instrumentation tests
 
 Android 6.0 is the declared minimum supported platform; older Android releases have not yet been exercised in a separate emulator/device matrix. iOS has not been built.
 
-The viewer reports EXTC file bytes and decoded grayscale/RGB pixel bytes separately. Decoded size is not the original PNG/JPEG file size, which EXTC v1/v2 do not store. Full block encoding cost is checked against raw storage; memory limits do not guarantee a file-size reduction over PNG or JPEG. Toolbar and dialog action icons have TalkBack descriptions and long-press tooltips.
+The viewer reports Original file, Decoded pixels, and EXTC file sizes. V3 files retain the encoded input file size; v1/v2 show Unavailable for that value. Full block encoding cost is checked against raw storage; memory limits do not guarantee a file-size reduction over PNG or JPEG. Toolbar and dialog action icons have TalkBack descriptions and long-press tooltips.
 
 ## Signed release
 
@@ -50,4 +50,4 @@ The viewer reports EXTC file bytes and decoded grayscale/RGB pixel bytes separat
 
 The default key is stored outside this repository at `%LOCALAPPDATA%\EXTC\signing\release.p12`, with alias `extc-release`. Keep this key and its password for future updates; a different key cannot update an existing installation. Passwords are read directly by signing tools from the private file and are never written into Gradle configuration. Keystores are ignored by Git.
 
-Output: `app/build/outputs/apk/release/experimental-compressor-0.1.0-release.apk`. Release builds exclude the debug test document provider and preserve the JNI entry points during R8 shrinking.
+Output: `app/build/outputs/apk/release/experimental-compressor-0.2.0-release.apk`. Release builds exclude the debug test document provider and preserve the JNI entry points during R8 shrinking.

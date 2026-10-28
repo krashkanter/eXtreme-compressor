@@ -20,7 +20,7 @@ if (!(Test-Path -LiteralPath $KeyStore)) {
 if ($LASTEXITCODE -ne 0) { throw "Release build failed." }
 $unsignedApk = Join-Path $projectDirectory "app\build\outputs\apk\release\app-release-unsigned.apk"
 $alignedApk = Join-Path $projectDirectory "app\build\outputs\apk\release\app-release-aligned.apk"
-$signedApk = Join-Path $projectDirectory "app\build\outputs\apk\release\experimental-compressor-0.1.0-release.apk"
+$signedApk = Join-Path $projectDirectory "app\build\outputs\apk\release\experimental-compressor-0.2.0-release.apk"
 & (Join-Path $buildToolsDirectory "zipalign.exe") -f -P 16 4 $unsignedApk $alignedApk
 if ($LASTEXITCODE -ne 0) { throw "APK alignment failed." }
 & (Join-Path $buildToolsDirectory "apksigner.bat") sign --ks $KeyStore --ks-key-alias $KeyAlias --ks-pass "file:$PasswordFile" --out $signedApk $alignedApk

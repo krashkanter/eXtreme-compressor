@@ -34,7 +34,7 @@ static CancelContext cancel_context(JNIEnv *env, jobject flag) {
 }
 
 JNIEXPORT void JNICALL Java_com_krashkanter_extc_NativeCodec_compress(
-    JNIEnv *env, jobject self, jobject bitmap, jstring output, jobject flag) {
+    JNIEnv *env, jobject self, jobject bitmap, jstring output, jobject flag, jlong source_bytes) {
     (void)self;
     AndroidBitmapInfo info = {0};
     if(AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS ||
@@ -52,6 +52,7 @@ JNIEXPORT void JNICALL Java_com_krashkanter_extc_NativeCodec_compress(
     image.width = (int)info.width;
     image.height = (int)info.height;
     image.channels = 3;
+    image.source_bytes = source_bytes > 0 ? (uint64_t)source_bytes : 0;
     size_t count = (size_t)image.width * (size_t)image.height;
     image.pixels = malloc(count * 3);
     if(!image.pixels) {

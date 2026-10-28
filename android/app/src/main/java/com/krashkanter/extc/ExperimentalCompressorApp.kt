@@ -97,8 +97,9 @@ fun ExperimentalCompressorApp(state: AppState, model: CompressorModel, dark: Boo
                     Text(result.name, style = MaterialTheme.typography.titleMedium)
                     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(18.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        StatRow("Original", formatSize(result.sourceBytes))
-                        StatRow("EXTC", formatSize(result.file.length()))
+                        StatRow("Current format", formatSize(result.sourceBytes))
+                        StatRow("Decoded pixels", formatSize(result.decodedBytes))
+                        StatRow("EXTC file", formatSize(result.file.length()))
                         StatRow("Time", formatTime(result.elapsedMillis))
                         StatRow("Dimensions", "${result.width} \u00D7 ${result.height}")
                     }
@@ -260,8 +261,9 @@ private fun ImageViewer(image: OpenedImage, close: () -> Unit) {
                     .pointerInput(image) { detectTapGestures(onDoubleTap = { scale = if(scale > 1f) 1f else 2.5f; offset = androidx.compose.ui.geometry.Offset.Zero }) })
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatRow("EXTC", formatSize(image.bytes))
+            StatRow("Current format", image.sourceBytes?.let(::formatSize) ?: "Unavailable")
             StatRow("Decoded pixels", formatSize(image.decodedBytes))
+            StatRow("EXTC file", formatSize(image.bytes))
             Text("${image.bitmap.width} \u00D7 ${image.bitmap.height}  \u00B7  EXTC v${image.version}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

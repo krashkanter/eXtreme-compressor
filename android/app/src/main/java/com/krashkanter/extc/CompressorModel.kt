@@ -34,13 +34,14 @@ data class ConvertedImage(
     val sourceBytes: Long,
     val elapsedMillis: Long,
     val width: Int,
-    val height: Int
+    val height: Int,
+    val decodedBytes: Long
 )
 
 data class BatchInput(val uri: Uri, val relativeName: String)
 data class BatchSelection(val name: String, val inputs: List<BatchInput>)
 data class BatchSummary(val saved: Int, val failed: Int, val cancelled: Boolean, val elapsedMillis: Long)
-data class OpenedImage(val bitmap: Bitmap, val name: String, val version: Int, val bytes: Long, val decodedBytes: Long)
+data class OpenedImage(val bitmap: Bitmap, val name: String, val version: Int, val bytes: Long, val decodedBytes: Long, val sourceBytes: Long?)
 data class BusyState(val label: String, val completed: Int = 0, val total: Int = 0)
 data class AppState(
     val busy: BusyState? = null,
@@ -159,9 +160,15 @@ class CompressorModel(application: Application) : AndroidViewModel(application) 
             val size = copyInput(uri, source, flag)
             bitmap = loadBitmap(source)
             checkCancelled(flag)
-            NativeCodec.compress(bitmap, destination.path, flag)
+            NativeCodec.compress(bitmap, destination.path, flag, size)
             checkCancelled(flag)
-            return ConvertedImage(destination, name, size, SystemClock.elapsedRealtime() - started, bitmap.width, bitmap.height)
+            val channels = destination.inputStream().use { stream ->
+                val header = ByteArray(24)
+                java.io.DataInputStream(stream).readFully(header)
+                header[22].toInt()
+            }
+            return ConvertedImage(destination, name, size, SystemClock.elapsedRealtime() - started, bitmap.width, bitmap.height,
+                bitmap.width.toLong() * bitmap.height * channels)
         } catch(error: Throwable) {
             destination.delete()
             throw error
@@ -326,19 +333,19 @@ class CompressorModel(application: Application) : AndroidViewModel(application) 
                             throw IOException("This is not an EXTC file.")
                         }
                         val version = header[4].toInt() and 255
-                        if(version !in 1..2) throw IOException("EXTC version $version is not supported. A newer app may be needed.")
-                        if(version == 2 && header[5].toInt() != 1) throw IOException("This EXTC file contains another media type, not an image.")
+                        if(version !in 1..3) throw IOException("EXTC version $version is not supported. A newer app may be needed.")
+                        if(version >= 2 && header[5].toInt() != 1) throw IOException("This EXTC file contains another media type, not an image.")
                         version
                     }
-                    val channels = source.inputStream().use { input ->
-                        val header = ByteArray(24)
-                        val count = input.read(header)
-                        if(count < 20) throw IOException("Incomplete EXTC header.")
-                        if(version == 1) { if(header[7].toInt() == 3) 3 else 1 }
-                        else { if(count < 24) throw IOException("Incomplete EXTC header."); header[22].toInt() }
+                    val metadata = source.inputStream().use { input ->
+                        val header = ByteArray(if(version == 3) 32 else if(version == 2) 24 else 20)
+                        java.io.DataInputStream(input).readFully(header)
+                        val channels = if(version == 1) { if(header[7].toInt() == 3) 3 else 1 } else header[22].toInt()
+                        val original = if(version == 3) java.nio.ByteBuffer.wrap(header).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong(24).takeIf { it > 0 } else null
+                        channels to original
                     }
                     val bitmap = NativeCodec.decompress(source.path, flag, maxPixels)
-                    OpenedImage(bitmap, fileName(uri), version, size, bitmap.width.toLong() * bitmap.height * channels)
+                    OpenedImage(bitmap, fileName(uri), version, size, bitmap.width.toLong() * bitmap.height * metadata.first, metadata.second)
                 }
                 mutableState.value = mutableState.value.copy(busy = null, viewer = opened)
             } catch(error: Throwable) {
